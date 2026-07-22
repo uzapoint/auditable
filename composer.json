@@ -1,0 +1,75 @@
+{
+  "name": "uzapoint/auditable",
+  "description": "Distributed audit logging for Laravel microservices via RabbitMQ with OpenTelemetry trace correlation",
+  "keywords": [
+    "laravel",
+    "microservices",
+    "logs",
+    "rabbitmq",
+    "opentelemetry",
+    "uzapoint"
+  ],
+  "type": "library",
+  "license": "MIT",
+
+  "authors": [
+    {
+      "name": "Caleb Chege",
+      "email": "caleb98kymez@gmail.com",
+      "homepage": "https://github.com/caleb98kymez",
+      "role": "Technical Lead & Package Maintainer"
+    },
+    {
+      "name": "Sammy Orondo",
+      "email": "sammyorondo2@gmail.com",
+      "homepage": "https://github.com/sammy-boy",
+      "role": "Lead Developer"
+    }
+  ],
+
+  "autoload": {
+    "psr-4": {
+      "Uzapoint\\Auditable\\": "src/"
+    }
+  },
+
+  "autoload-dev": {
+    "psr-4": {
+      "Uzapoint\\Auditable\\Tests\\": "tests/"
+    }
+  },
+
+  "require": {
+    "php": "^8.4",
+    "illuminate/support": "^11.0|^12.0|^13.21",
+    "illuminate/database": "^11.0|^12.0|^13.21",
+    "uzapoint/eventbus-core": "^1.0",
+    "open-telemetry/sdk": "^1.15",
+    "symfony/http-client": "^8.1",
+    "nyholm/psr7": "^1.8",
+    "open-telemetry/api": "^1.10"
+  },
+
+  "require-dev": {
+    "phpunit/phpunit": "^11.0|^12.0|^13.2",
+    "orchestra/testbench": "^11.1"
+  },
+
+  "extra": {
+    "laravel": {
+      "providers": [
+        "Uzapoint\\Auditable\\AuditServiceProvider"
+      ]
+    }
+  },
+
+  "config": {
+    "allow-plugins": {
+      "php-http/discovery": true,
+      "tbachert/spi": true
+    }
+  },
+
+  "minimum-stability": "stable",
+  "prefer-stable": true
+}
