@@ -41,8 +41,8 @@
 
   "require": {
     "php": "^8.4",
-    "illuminate/support": "^11.0|^12.0|^13.21",
-    "illuminate/database": "^11.0|^12.0|^13.21",
+    "illuminate/support": "^11.0|^12.0|^13.0",
+    "illuminate/database": "^11.0|^12.0|^13.0",
     "uzapoint/eventbus-core": "^1.0",
     "open-telemetry/sdk": "^1.15",
     "symfony/http-client": "^8.1",
