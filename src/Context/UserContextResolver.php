@@ -45,7 +45,7 @@ class UserContextResolver
             'name' => $person['name'] ?? ($person['first_name'] . ' ' . $person['last_name']) ?? null,
             'email' => $person['email'] ?? null,
             'phone' => $person['phone'] ?? null,
-            'type' => 'App\\Models\\Person',
+            'type' => $person['type'] ?? 'App\\Models\\Person',
             'business_id' => $businessId,
             'person' => $person, // Full person array for extra context
             'permissions' => self::decodePermissions($request),
@@ -129,7 +129,7 @@ class UserContextResolver
             'name' => $person['name'] ?? ($person['first_name'] . ' ' . $person['last_name']) ?? null,
             'email' => $person['email'] ?? null,
             'phone' => $person['phone'] ?? null,
-            'type' => 'App\\Models\\Person',
+            'type' => $person['type'] ?? 'App\\Models\\Person',
             'business_id' => $request->header('X-Business-ID'),
             'person' => $person,
             'permissions' => [],
