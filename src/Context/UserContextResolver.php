@@ -42,7 +42,7 @@ class UserContextResolver
 
         return [
             'id' => $userId ?? $request->input('user_id'),
-            'name' => $person['name'] ?? $person['first_name'] . ' ' . $person['last_name'] ?? null,
+            'name' => $person['name'] ?? ($person['first_name'] . ' ' . $person['last_name']) ?? null,
             'email' => $person['email'] ?? null,
             'phone' => $person['phone'] ?? null,
             'type' => 'App\\Models\\Person',
@@ -126,7 +126,7 @@ class UserContextResolver
 
         return [
             'id' => $userId,
-            'name' => $person['name'] ?? $person['first_name'] . ' ' . $person['last_name'] ?? null,
+            'name' => $person['name'] ?? ($person['first_name'] . ' ' . $person['last_name']) ?? null,
             'email' => $person['email'] ?? null,
             'phone' => $person['phone'] ?? null,
             'type' => 'App\\Models\\Person',
@@ -167,7 +167,7 @@ class UserContextResolver
 
         return [
             'id' => $user->id,
-            'name' => $user->name ?? $user->first_name . ' ' . $user->last_name ?? null,
+            'name' => $user->name ?? ($user->first_name . ' ' . $user->last_name) ?? null,
             'email' => $user->email ?? null,
             'phone' => $user->phone ?? null,
             'type' => get_class($user),
