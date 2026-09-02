@@ -145,9 +145,13 @@ class UserContextResolver
      */
     private static function fromQueuedContext(): array
     {
+        if (!app()->bound('audit.user_context')) {
+            return self::emptyContext();
+        }
+
         $context = app('audit.user_context');
 
-        if (!$context) {
+        if (!is_array($context) || $context === []) {
             return self::emptyContext();
         }
 
@@ -217,7 +221,8 @@ class UserContextResolver
         app()->offsetUnset('audit.user_context');
     }
 
-    public static function forMessage(): array {
+    public static function forMessage(): array
+    {
         $context = self::resolve();
 
         return [
