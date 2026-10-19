@@ -5,8 +5,31 @@ namespace Uzapoint\Auditable\Context;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Request;
 
+/**
+ * Who caused an audited change. Tried in order: gateway headers, request
+ * body, a context set for a queued job, local auth, then "system".
+ *
+ * Every context returned has every key below, so callers never index a
+ * missing key, and resolving never throws: a missing X-Person header,
+ * partial person data or an undefined auth guard only leave fields null.
+ */
 class UserContextResolver
 {
+    private const array KEYS = [
+        'id' => null,
+        'name' => null,
+        'email' => null,
+        'phone' => null,
+        'type' => null,
+        'business_id' => null,
+        'person' => [],
+        'permissions' => [],
+        'roles' => [],
+        'terminal_id' => null,
+        'terminal_information' => null,
+        'source' => null,
+    ];
+
     public static function resolve(): array
     {
         $context = self::fromGatewayHeaders();
@@ -28,21 +51,21 @@ class UserContextResolver
     {
         $request = Request::instance();
 
-        // Your gateway sets these headers
+        // The gateway sets X-Person-ID, X-User-ID and X-Business-ID from the
+        // JWT. X-Person (the full person) is optional and usually absent.
         $userId = $request->header('X-Person-ID');
         $businessId = $request->header('X-Business-ID');
 
-        // User info might be in headers or body
         $person = self::decodePersonFromHeaders($request)
-            ?? $request->input('person', []);
+            ?? self::arrayInput($request, 'person');
 
         if (!$userId && !$request->input('user_id')) {
             return self::emptyContext();
         }
 
-        return [
+        return self::normalize([
             'id' => $userId ?? $request->input('user_id'),
-            'name' => $person['name'] ?? ($person['first_name'] . ' ' . $person['last_name']) ?? null,
+            'name' => self::personName($person),
             'email' => $person['email'] ?? null,
             'phone' => $person['phone'] ?? null,
             'type' => $person['type'] ?? 'App\\Models\\Person',
@@ -53,7 +76,7 @@ class UserContextResolver
             'terminal_id' => $request->input('terminal_id'),
             'terminal_information' => $request->input('terminal_information'),
             'source' => 'gateway_header',
-        ];
+        ]);
     }
 
     /**
@@ -66,12 +89,13 @@ class UserContextResolver
             return null;
         }
 
-        try {
-            return json_decode(base64_decode($encoded), true);
-        } catch (\Exception $e) {
-            Log::warning('Failed to decode X-Person header', ['error' => $e->getMessage()]);
+        $decoded = json_decode((string) base64_decode($encoded, true), true);
+        if (!is_array($decoded)) {
+            Log::warning('Ignoring an X-Person header that is not base64-encoded JSON.');
             return null;
         }
+
+        return $decoded;
     }
 
     /**
@@ -122,11 +146,11 @@ class UserContextResolver
             return self::emptyContext();
         }
 
-        $person = $request->input('person', []);
+        $person = self::arrayInput($request, 'person');
 
-        return [
+        return self::normalize([
             'id' => $userId,
-            'name' => $person['name'] ?? ($person['first_name'] . ' ' . $person['last_name']) ?? null,
+            'name' => self::personName($person),
             'email' => $person['email'] ?? null,
             'phone' => $person['phone'] ?? null,
             'type' => $person['type'] ?? 'App\\Models\\Person',
@@ -137,7 +161,7 @@ class UserContextResolver
             'terminal_id' => $request->input('terminal_id'),
             'terminal_information' => $request->input('terminal_information'),
             'source' => 'request_body',
-        ];
+        ]);
     }
 
     /**
@@ -155,7 +179,7 @@ class UserContextResolver
             return self::emptyContext();
         }
 
-        return array_merge($context, ['source' => 'queued_context']);
+        return self::normalize(array_merge($context, ['source' => 'queued_context']));
     }
 
     /**
@@ -163,15 +187,30 @@ class UserContextResolver
      */
     private static function fromLocalAuth(): array
     {
-        $user = auth('api')->user();
+        // auth('<guard>') throws for an undefined guard, and many services
+        // define none; that must never break the model save being audited.
+        $guard = config('auditable.auth_guard', 'api');
+        if (!$guard || !array_key_exists($guard, (array) config('auth.guards', []))) {
+            return self::emptyContext();
+        }
+
+        try {
+            $user = auth($guard)->user();
+        } catch (\Throwable $e) {
+            Log::debug('Audit causer lookup through local auth failed', ['guard' => $guard, 'error' => $e->getMessage()]);
+            return self::emptyContext();
+        }
 
         if (!$user) {
             return self::emptyContext();
         }
 
-        return [
+        return self::normalize([
             'id' => $user->id,
-            'name' => $user->name ?? ($user->first_name . ' ' . $user->last_name) ?? null,
+            'name' => $user->name ?? self::personName([
+                'first_name' => $user->first_name ?? null,
+                'last_name' => $user->last_name ?? null,
+            ]),
             'email' => $user->email ?? null,
             'phone' => $user->phone ?? null,
             'type' => get_class($user),
@@ -182,7 +221,7 @@ class UserContextResolver
             'terminal_id' => null,
             'terminal_information' => null,
             'source' => 'local_auth',
-        ];
+        ]);
     }
 
     /**
@@ -211,6 +250,34 @@ class UserContextResolver
         return ['id' => null];
     }
 
+    /** Every key present, unknown keys kept. */
+    private static function normalize(array $context): array
+    {
+        return array_merge(self::KEYS, $context);
+    }
+
+    /** `name`, else first and last name joined, else null. Missing parts are fine. */
+    private static function personName(array $person): ?string
+    {
+        if (!empty($person['name']) && is_string($person['name'])) {
+            return $person['name'];
+        }
+
+        $name = trim(implode(' ', array_filter([
+            $person['first_name'] ?? null,
+            $person['last_name'] ?? null,
+        ], fn ($part) => is_string($part) && $part !== '')));
+
+        return $name !== '' ? $name : null;
+    }
+
+    private static function arrayInput($request, string $key): array
+    {
+        $value = $request->input($key, []);
+
+        return is_array($value) ? $value : [];
+    }
+
     public static function set(array $context): void
     {
         app()->instance('audit.user_context', $context);
@@ -218,12 +285,14 @@ class UserContextResolver
 
     public static function clear(): void
     {
-        app()->offsetUnset('audit.user_context');
+        if (app()->bound('audit.user_context')) {
+            app()->offsetUnset('audit.user_context');
+        }
     }
 
     public static function forMessage(): array
     {
-        $context = self::resolve();
+        $context = self::normalize(self::resolve());
 
         return [
             'id' => $context['id'],

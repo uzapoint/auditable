@@ -48,14 +48,34 @@ return [
     | Fields that should never be logged (passwords, tokens, etc.)
     */
     'sensitive_fields' => [
+        // Matched case-insensitively, as the whole key or a `_`-suffix:
+        // 'password' also covers 'initiator_password', 'secret' covers
+        // 'client_secret'. Hidden and encrypted model attributes are always
+        // redacted by the Auditable trait, whatever this list says.
         'password',
         'password_confirmation',
         'token',
         'api_token',
+        'access_token',
+        'refresh_token',
         'secret',
+        'secret_key',
+        'api_key',
+        'private_key',
+        'passkey',
+        'authorization',
         'credit_card',
         'cvv',
         'ssn',
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Local Auth Guard
+    |--------------------------------------------------------------------------
+    | Used to find the causer when a request did not come through the gateway.
+    | Skipped when the guard is not defined in config/auth.php.
+    */
+    'auth_guard' => env('AUDIT_AUTH_GUARD', 'api'),
 
 ];

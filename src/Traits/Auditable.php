@@ -7,114 +7,105 @@ use Illuminate\Support\Str;
 use Uzapoint\Auditable\Context\UserContextResolver;
 use Uzapoint\Auditable\Services\AuditPublisher;
 
+/**
+ * Publishes created, updated (or voided / approved / rejected), deleted and
+ * restored events for an Eloquent model.
+ *
+ * Values that must never leave the service are replaced with
+ * AuditPublisher::REDACTED before publishing:
+ *   - the model's $hidden attributes,
+ *   - attributes with an `encrypted` cast (their original values are
+ *     decrypted by Eloquent, so they would otherwise leak in plain text),
+ *   - attributes listed in the model's optional $auditExclude property,
+ *   - keys matching `auditable.sensitive_fields` (AuditPublisher).
+ * The attribute name is kept, so the audit still shows that it changed.
+ */
 trait Auditable
 {
     public static function bootAuditable(): void
     {
         static::created(function (Model $model) {
-            if (!static::shouldAudit('created')) return;
-
-            $user = UserContextResolver::resolve();
-
-            app(AuditPublisher::class)->publish([
-                'event' => 'created',
-                'description' => static::buildDescription($model, 'created'),
-                'log_name' => static::getLogName(),
-                'subject_type' => get_class($model),
-                'subject_id' => $model->id,
-                'causer_id' => $user['id'],
-                'causer_type' => $user['type'],
-                'causer_name' => $user['name'],
-                'causer_email' => $user['email'],
-                'changes' => [
-                    'new' => $model->toArray()
-                ],
-                'business_id' => $user['business_id'] ?? null,
-                'properties' => [
-                    'terminal_id' => $user['terminal_id'] ?? null,
-                    'source' => $user['source'] ?? null,
-                ]
+            static::publishAuditEvent($model, 'created', [
+                'new' => static::redactForAudit($model, $model->attributesToArray()),
             ]);
         });
 
         static::updated(function (Model $model) {
-            if (static::shouldAudit('updated')) return;
-
             $dirty = $model->getChanges();
             unset($dirty['updated_at']);
 
             if (empty($dirty)) return;
 
-            $user = UserContextResolver::resolve();
             $event = static::resolveEvent($model, $dirty);
 
-            app(AuditPublisher::class)->publish([
-                'event' => $event,
-                'description' => static::buildDescription($model, $event, $dirty),
-                'log_name' => static::getLogName(),
-                'subject_type' => get_class($model),
-                'subject_id' => $model->id,
-                'causer_id' => $user['id'],
-                'causer_type' => $user['type'],
-                'causer_name' => $user['name'],
-                'causer_email' => $user['email'],
-                'changes' => [
-                    'old' => array_intersect_key($model->getOriginal(), $dirty),
-                    'new' => $dirty,
-                ],
-                'business_id' => $user['business_id'],
-                'properties' => [
-                    'terminal_id' => $user['terminal_id'],
-                    'source' => $user['source'],
-                ],
-            ]);
+            static::publishAuditEvent($model, $event, [
+                'old' => static::redactForAudit($model, array_intersect_key($model->getOriginal(), $dirty)),
+                'new' => static::redactForAudit($model, $dirty),
+            ], $dirty);
         });
 
         static::deleted(function (Model $model) {
-            if (!static::shouldAudit('deleted')) return;
-
-            $user = UserContextResolver::resolve();
-
-            app(AuditPublisher::class)->publish([
-                'event' => 'deleted',
-                'description' => static::buildDescription($model, 'deleted'),
-                'log_name' => static::getLogName(),
-                'subject_type' => get_class($model),
-                'subject_id' => $model->id,
-                'causer_id' => $user['id'],
-                'causer_type' => $user['type'],
-                'causer_name' => $user['name'],
-                'causer_email' => $user['email'],
-                'changes' => ['old' => $model->toArray()],
-                'business_id' => $user['business_id'],
-                'properties' => [
-                    'terminal_id' => $user['terminal_id'],
-                    'source' => $user['source'],
-                ],
+            static::publishAuditEvent($model, 'deleted', [
+                'old' => static::redactForAudit($model, $model->attributesToArray()),
             ]);
         });
 
         if (method_exists(static::class, 'restored')) {
             static::restored(function (Model $model) {
-                if (!static::shouldAudit('restored')) return;
-
-                $user = UserContextResolver::resolve();
-
-                app(AuditPublisher::class)->publish([
-                    'event' => 'restored',
-                    'description' => static::buildDescription($model, 'restored'),
-                    'log_name' => static::getLogName(),
-                    'subject_type' => get_class($model),
-                    'subject_id' => $model->id,
-                    'causer_id' => $user['id'],
-                    'causer_type' => $user['type'],
-                    'causer_name' => $user['name'],
-                    'causer_email' => $user['email'],
-                    'changes' => [],
-                    'properties' => [],
-                ]);
+                static::publishAuditEvent($model, 'restored', []);
             });
         }
+    }
+
+    protected static function publishAuditEvent(Model $model, string $event, array $changes, array $dirty = []): void
+    {
+        if (!static::shouldAudit($event)) return;
+
+        $user = UserContextResolver::resolve();
+
+        app(AuditPublisher::class)->publish([
+            'event' => $event,
+            'description' => static::buildDescription($model, $event, $dirty),
+            'log_name' => static::getLogName(),
+            'subject_type' => get_class($model),
+            'subject_id' => $model->getKey(),
+            'causer_id' => $user['id'] ?? null,
+            'causer_type' => $user['type'] ?? null,
+            'causer_name' => $user['name'] ?? null,
+            'causer_email' => $user['email'] ?? null,
+            'changes' => $changes,
+            'business_id' => $user['business_id'] ?? null,
+            'properties' => [
+                'terminal_id' => $user['terminal_id'] ?? null,
+                'source' => $user['source'] ?? null,
+            ],
+        ]);
+    }
+
+    /**
+     * Replaces values the audit must not carry, keeping their keys.
+     *
+     * @param  array<string, mixed>  $attributes
+     * @return array<string, mixed>
+     */
+    protected static function redactForAudit(Model $model, array $attributes): array
+    {
+        $excluded = array_merge(
+            $model->getHidden(),
+            property_exists($model, 'auditExclude') ? (array) $model->auditExclude : [],
+            array_keys(array_filter(
+                $model->getCasts(),
+                fn ($cast) => is_string($cast) && str_starts_with($cast, 'encrypted'),
+            )),
+        );
+
+        foreach ($excluded as $key) {
+            if (array_key_exists($key, $attributes)) {
+                $attributes[$key] = AuditPublisher::REDACTED;
+            }
+        }
+
+        return $attributes;
     }
 
     protected static function getLogName(): string
@@ -125,25 +116,26 @@ trait Auditable
     protected static function buildDescription(Model $model, string $event, array $dirty = []): string
     {
         $class = class_basename($model);
+        $id = $model->getKey();
 
         return match ($event) {
-            'created' => "{$class} #{$model->id} was created",
+            'created' => "{$class} #{$id} was created",
 
             'updated' => empty($dirty)
-                ? "{$class} #{$model->id} was updated"
-                : "{$class} #{$model->id} was updated: " . implode(', ', array_keys($dirty)),
+                ? "{$class} #{$id} was updated"
+                : "{$class} #{$id} was updated: " . implode(', ', array_keys($dirty)),
 
-            'deleted' => "{$class} #{$model->id} was deleted",
-            'restored' => "{$class} #{$model->id} was restored",
+            'deleted' => "{$class} #{$id} was deleted",
+            'restored' => "{$class} #{$id} was restored",
 
-            'voided' => "{$class} #{$model->id} was voided" .
+            'voided' => "{$class} #{$id} was voided" .
                 (isset($dirty['void_reason']) ? " (reason: {$dirty['void_reason']})" : ''),
 
-            'approved' => "{$class} #{$model->id} was approved",
-            'rejected' => "{$class} #{$model->id} was rejected" .
+            'approved' => "{$class} #{$id} was approved",
+            'rejected' => "{$class} #{$id} was rejected" .
                 (isset($dirty['rejection_reason']) ? " (reason: {$dirty['rejection_reason']})" : ''),
 
-            default => "{$class} #{$model->id} was {$event}",
+            default => "{$class} #{$id} was {$event}",
         };
     }
 

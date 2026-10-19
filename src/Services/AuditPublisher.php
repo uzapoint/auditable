@@ -10,21 +10,26 @@ use Uzapoint\EventBus\RabbitMQService;
 
 class AuditPublisher
 {
+    public const string REDACTED = '***REDACTED***';
+
     /**
-     * @throws \Exception
+     * Publishes to RabbitMQ; on failure stores the event in the fallback
+     * table. The payload is redacted first, so neither path can carry a
+     * sensitive value.
      */
     public function publish(array $payload): void
     {
+        $payload = $this->sanitizePayload($payload);
+
         try {
             $payload = $this->enrichPayload($payload);
-            $payload = $this->sanitizePayload($payload);
 
             app(RabbitMQService::class)->publish(
                 exchange: 'audit.events',
                 routingKey: 'audit.events',
                 data: $payload
             );
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             $this->handleFallback($payload);
             Log::error("Failed to publish audit event: " . $e->getMessage());
         }
@@ -46,6 +51,7 @@ class AuditPublisher
             'causer_name' => $context['causer_name'] ?? null,
             'causer_email' => $context['causer_email'] ?? null,
             'changes' => $context['changes'] ?? null,
+            'business_id' => $context['business_id'] ?? null,
             'properties' => $context['properties'] ?? [],
         ]);
     }
@@ -73,16 +79,33 @@ class AuditPublisher
         return $payload;
     }
 
+    /**
+     * Redacts keys named in `auditable.sensitive_fields`, at any depth.
+     * Matching ignores case and also covers suffixed names: `password`
+     * matches `Password` and `initiator_password`, `secret` matches
+     * `client_secret`.
+     */
     private function sanitizePayload(array $payload): array
     {
-        $sensitive = config('auditable.sensitive_fields', []);
+        $sensitive = array_map('strtolower', (array) config('auditable.sensitive_fields', []));
 
-        $scrub = function ($data) use ($sensitive, &$scrub) {
+        $isSensitive = function ($key) use ($sensitive): bool {
+            if (!is_string($key)) return false;
+
+            $key = strtolower($key);
+            foreach ($sensitive as $name) {
+                if ($key === $name || str_ends_with($key, '_' . $name)) return true;
+            }
+
+            return false;
+        };
+
+        $scrub = function ($data) use ($isSensitive, &$scrub) {
             if (!is_array($data)) return $data;
 
             foreach ($data as $key => $value) {
-                if (in_array($key, $sensitive, true)) {
-                    $data[$key] = '***REDACTED***';
+                if ($isSensitive($key)) {
+                    $data[$key] = self::REDACTED;
                 } elseif (is_array($value)) {
                     $data[$key] = $scrub($value);
                 }
@@ -104,16 +127,20 @@ class AuditPublisher
 
     private function handleFallback(array $payload): void
     {
-        if (!config('auditable.fallback_enabled')) {
+        // `fallback_enabled` was the key read up to v1.0.3; it is still honoured if set.
+        $enabled = config('auditable.fallback.enabled', config('auditable.fallback_enabled', true));
+        if (!filter_var($enabled, FILTER_VALIDATE_BOOL)) {
             return;
         }
 
         try {
-            DB::table(config('auditable.fallback.table'))->insert([
+            DB::table(config('auditable.fallback.table', 'failed_audit_events'))->insert([
                 'payload' => json_encode($payload),
                 'failed_at' => now(),
-                'retry_after' => now()->addMinutes(config('auditable.fallback.retry_after_minutes')),
+                'retry_after' => now()->addMinutes((int) config('auditable.fallback.retry_after_minutes', 5)),
                 'attempts' => 0,
+                'created_at' => now(),
+                'updated_at' => now(),
             ]);
         } catch (\Throwable $e) {
             Log::emergency('Audit fallback storage also failed', [

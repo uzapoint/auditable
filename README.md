@@ -111,15 +111,36 @@ return [
         'password_confirmation',
         'token',
         'api_token',
+        'access_token',
+        'refresh_token',
         'secret',
+        'secret_key',
+        'api_key',
+        'private_key',
+        'passkey',
+        'authorization',
         'credit_card',
         'cvv',
         'ssn',
     ],
+
+    'auth_guard' => env('AUDIT_AUTH_GUARD', 'api'),
 ];
 ```
 
-Use `events => ['*']` to publish every supported event. Sensitive fields are recursively replaced with `***REDACTED***` inside `changes` and `properties`.
+Use `events => ['*']` to publish every supported event.
+
+### What is redacted
+
+Values are replaced with `***REDACTED***`; the key stays, so the audit still shows what changed.
+
+- **Sensitive keys**, anywhere inside `changes` and `properties`. Matching ignores case and also covers `_`-suffixed names: `password` matches `Password` and `initiator_password`, and `secret` matches `client_secret`.
+- **Model attributes**, for models using the `Auditable` trait:
+  - every attribute in the model's `$hidden`;
+  - every attribute with an `encrypted` cast (`encrypted`, `encrypted:array`, ...). Eloquent decrypts their original values, so without this an update would publish the old secret in plain text;
+  - every attribute listed in an optional `$auditExclude` property on the model.
+
+Redaction happens before publishing, so payloads stored in the fallback table are redacted too.
 
 ## Enable Model Auditing
 
@@ -192,8 +213,10 @@ You can also inject `Uzapoint\Auditable\Services\AuditPublisher` and call `publi
 1. Gateway headers and request input
 2. Request body values
 3. Context set for a queued job or consumed message
-4. `auth('api')->user()`
+4. The local auth guard named by `auditable.auth_guard` (default `api`), only if that guard is defined in `config/auth.php`
 5. A system context
+
+Resolving never throws. A missing `X-Person` header or partial person data leaves the name `null` (or builds it from whichever of `first_name` and `last_name` exist), and every returned context contains every key.
 
 For HTTP requests through an API gateway, pass these values when available:
 
@@ -256,6 +279,8 @@ php artisan migrate
 ```
 
 The table defaults to `failed_audit_events` and stores the JSON payload, failure time, retry time, attempts, processed time, and error text.
+
+The fallback is controlled by `auditable.fallback.enabled` (`AUDIT_FALLBACK_ENABLED`, default `true`). Up to v1.0.3 the publisher read the wrong key, `auditable.fallback_enabled`, so the fallback table was never written; that key is still honoured if a service set it.
 
 ## Central Audit Service Consumer
 
@@ -347,5 +372,12 @@ recorded_at
 - If no events reach the audit service, verify RabbitMQ credentials in `config('queue.connections.rabbitmq')` and confirm the central service is consuming `audit.events`.
 - If audit records have `source_service=unknown`, set `AUDIT_SERVICE_NAME` in the publishing service.
 - If causer fields are empty, forward the gateway headers or set `UserContextResolver` before updating audited models.
-- If sensitive data appears in payloads, add the exact field names to `auditable.sensitive_fields`.
+- If sensitive data appears in payloads, add the field name to `auditable.sensitive_fields`, mark the attribute `$hidden` or `encrypted`, or list it in the model's `$auditExclude`.
+
+## Development
+
+```bash
+composer install
+composer test
+```
 - If consumed events are ignored, confirm `config/eventbus.php` maps the `audit.events` routing key to `Uzapoint\Auditable\Jobs\ProcessAuditEvents::class`.
