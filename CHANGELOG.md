@@ -1,6 +1,25 @@
 # Changelog
 
-## Unreleased (proposed 1.0.4)
+## 1.0.5
+
+### Changed
+
+- **Audit events wait for the database commit.** Inside a transaction, events
+  from the `Auditable` trait and from `Audit::log()` are sent after the
+  outermost commit and dropped on rollback (including a rolled-back nested
+  savepoint), so the audit no longer records changes that were never saved.
+  The causer, changes, batch UUID and trace ids are captured when the change
+  happens, so clearing `UserContextResolver` or `BatchContext` before the
+  commit does not affect the event. Outside a transaction events are sent
+  immediately, as before.
+- Model events wait for the model's own connection.
+- RabbitMQ is no longer called while the transaction holds its locks, and the
+  fallback row is written after the commit instead of inside the transaction
+  (where a rollback removed it).
+- New option `auditable.after_commit` (`AUDIT_AFTER_COMMIT`, default `true`)
+  restores the old behaviour when set to `false`.
+
+## 1.0.4
 
 ### Fixed
 

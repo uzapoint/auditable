@@ -16,23 +16,57 @@ class AuditPublisher
      * Publishes to RabbitMQ; on failure stores the event in the fallback
      * table. The payload is redacted first, so neither path can carry a
      * sensitive value.
+     *
+     * Inside a database transaction the event is sent only after the
+     * outermost commit, and dropped if the transaction rolls back, so the
+     * audit never records changes that were not saved. Everything that can
+     * change before then (batch id, trace ids, publish time) is captured now.
+     * Outside a transaction it is sent immediately.
+     *
+     * @param  string|null  $connection  Connection whose transaction to wait for (default connection when null).
      */
-    public function publish(array $payload): void
+    public function publish(array $payload, ?string $connection = null): void
     {
         $payload = $this->sanitizePayload($payload);
 
         try {
             $payload = $this->enrichPayload($payload);
+        } catch (\Throwable $e) {
+            $this->fail($payload, $e);
+            return;
+        }
 
+        if (!filter_var(config('auditable.after_commit', true), FILTER_VALIDATE_BOOL)) {
+            $this->send($payload);
+            return;
+        }
+
+        try {
+            DB::connection($connection)->afterCommit(fn () => $this->send($payload));
+        } catch (\Throwable $e) {
+            // The connection could not be resolved: never lose the event.
+            Log::warning('Audit event could not wait for commit, sending now: ' . $e->getMessage());
+            $this->send($payload);
+        }
+    }
+
+    private function send(array $payload): void
+    {
+        try {
             app(RabbitMQService::class)->publish(
                 exchange: 'audit.events',
                 routingKey: 'audit.events',
                 data: $payload
             );
         } catch (\Throwable $e) {
-            $this->handleFallback($payload);
-            Log::error("Failed to publish audit event: " . $e->getMessage());
+            $this->fail($payload, $e);
         }
+    }
+
+    private function fail(array $payload, \Throwable $e): void
+    {
+        $this->handleFallback($payload);
+        Log::error("Failed to publish audit event: " . $e->getMessage());
     }
 
     /**

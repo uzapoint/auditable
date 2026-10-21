@@ -27,6 +27,16 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Publish After Commit
+    |--------------------------------------------------------------------------
+    | Inside a database transaction, send audit events only after it commits
+    | and drop them if it rolls back. Outside a transaction they are sent
+    | immediately either way.
+    */
+    'after_commit' => env('AUDIT_AFTER_COMMIT', true),
+
+    /*
+    |--------------------------------------------------------------------------
     | Event Filtering
     |--------------------------------------------------------------------------
     | Control which events are published. Set to ['*'] for all.

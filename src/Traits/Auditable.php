@@ -63,6 +63,8 @@ trait Auditable
 
         $user = UserContextResolver::resolve();
 
+        // The user is resolved above and the payload built now; only sending
+        // waits for the model's transaction to commit.
         app(AuditPublisher::class)->publish([
             'event' => $event,
             'description' => static::buildDescription($model, $event, $dirty),
@@ -79,7 +81,7 @@ trait Auditable
                 'terminal_id' => $user['terminal_id'] ?? null,
                 'source' => $user['source'] ?? null,
             ],
-        ]);
+        ], $model->getConnectionName());
     }
 
     /**

@@ -269,6 +269,18 @@ try {
 
 The batch UUID is added to `meta.batch_uuid` on every audit payload published while the context is active.
 
+## Publishing After Commit
+
+Inside a database transaction, audit events are sent only after the outermost transaction commits, and dropped if it rolls back (a rolled-back nested savepoint drops only its own events). The audit therefore never records a change that was not saved. Model events wait for the model's own connection.
+
+Everything the event carries is captured when the change happens: changes, causer, batch UUID and trace ids. Clearing `UserContextResolver` or `BatchContext` before the commit does not affect it.
+
+Outside a transaction, events are sent immediately. To always send immediately:
+
+```dotenv
+AUDIT_AFTER_COMMIT=false
+```
+
 ## Fallback Storage
 
 When RabbitMQ publishing fails, the publisher can insert the payload into a local fallback table for retry. Publish the migration and run migrations:
