@@ -19,6 +19,15 @@ use Uzapoint\Auditable\Services\AuditPublisher;
  *   - attributes listed in the model's optional $auditExclude property,
  *   - keys matching `auditable.sensitive_fields` (AuditPublisher).
  * The attribute name is kept, so the audit still shows that it changed.
+ *
+ * A model can shape its events by defining any of these optional methods:
+ *   - auditEvent(array $dirty): ?string — the event name for an update, e.g.
+ *     'shipped' when status changes; null keeps the default detection.
+ *   - auditDescription(string $event, array $dirty): ?string — the
+ *     description; null keeps the default.
+ *   - auditProperties(string $event): array — extra properties merged into
+ *     the event (a reference, the items, the stores, …). They are redacted
+ *     like the rest of the payload.
  */
 trait Auditable
 {
@@ -77,10 +86,13 @@ trait Auditable
             'causer_email' => $user['email'] ?? null,
             'changes' => $changes,
             'business_id' => $user['business_id'] ?? null,
-            'properties' => [
-                'terminal_id' => $user['terminal_id'] ?? null,
-                'source' => $user['source'] ?? null,
-            ],
+            'properties' => array_merge(
+                [
+                    'terminal_id' => $user['terminal_id'] ?? null,
+                    'source' => $user['source'] ?? null,
+                ],
+                method_exists($model, 'auditProperties') ? (array) $model->auditProperties($event) : [],
+            ),
         ], $model->getConnectionName());
     }
 
@@ -117,6 +129,13 @@ trait Auditable
 
     protected static function buildDescription(Model $model, string $event, array $dirty = []): string
     {
+        if (method_exists($model, 'auditDescription')) {
+            $description = $model->auditDescription($event, $dirty);
+            if ($description !== null) {
+                return $description;
+            }
+        }
+
         $class = class_basename($model);
         $id = $model->getKey();
 
@@ -143,6 +162,13 @@ trait Auditable
 
     protected static function resolveEvent(Model $model, array $dirty): string
     {
+        if (method_exists($model, 'auditEvent')) {
+            $event = $model->auditEvent($dirty);
+            if ($event !== null) {
+                return $event;
+            }
+        }
+
         // Detect void
         if (
             isset($dirty['status']) &&

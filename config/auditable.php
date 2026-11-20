@@ -23,6 +23,11 @@ return [
         'enabled' => env('AUDIT_FALLBACK_ENABLED', true),
         'table' => env('AUDIT_FALLBACK_TABLE', 'failed_audit_events'),
         'retry_after_minutes' => env('AUDIT_FALLBACK_RETRY_AFTER', 5),
+        // audit:retry-failed replays the table. It runs every five minutes on
+        // the service's scheduler unless schedule_retries is false.
+        'schedule_retries' => env('AUDIT_FALLBACK_SCHEDULE_RETRIES', true),
+        'max_attempts' => env('AUDIT_FALLBACK_MAX_ATTEMPTS', 10),
+        'retry_batch_size' => env('AUDIT_FALLBACK_RETRY_BATCH_SIZE', 200),
     ],
 
     /*
